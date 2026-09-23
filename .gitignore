@@ -1,0 +1,13 @@
+# build output
+pi-web-tray.exe
+*.zip
+*.sha256
+
+# logs and local settings produced at runtime
+*.log
+
+# editor / OS noise
+.vs/
+.vscode/
+Thumbs.db
+desktop.ini

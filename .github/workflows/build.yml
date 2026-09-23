@@ -1,0 +1,95 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve version
+        id: version
+        shell: pwsh
+        run: |
+          $ref = "${{ github.ref }}"
+          if ($ref -like "refs/tags/v*") {
+            $version = "${{ github.ref_name }}".Substring(1)
+          } else {
+            $version = "0.0.0"
+          }
+          $numeric = $version.Split("-")[0]
+          $parts = @($numeric.Split(".")) + @("0", "0", "0", "0")
+          $asm = ($parts[0..3] -join ".")
+
+          $path = "src/AssemblyInfo.cs"
+          $text = Get-Content $path -Raw
+          $text = $text -replace 'AssemblyVersion\("[^"]+"\)', "AssemblyVersion(`"$asm`")"
+          $text = $text -replace 'AssemblyFileVersion\("[^"]+"\)', "AssemblyFileVersion(`"$asm`")"
+          $text = $text -replace 'AssemblyInformationalVersion\("[^"]+"\)', "AssemblyInformationalVersion(`"$version`")"
+          Set-Content -Path $path -Value $text -NoNewline
+
+          "version=$version" >> $env:GITHUB_OUTPUT
+          "assembly=$asm" >> $env:GITHUB_OUTPUT
+          Write-Host "packaging version $version (assembly $asm)"
+
+      - name: Build
+        shell: cmd
+        run: build.cmd
+
+      - name: Verify exe
+        shell: pwsh
+        run: |
+          $exe = Get-Item pi-web-tray.exe
+          if ($exe.Length -lt 20000) { throw "pi-web-tray.exe looks too small: $($exe.Length) bytes" }
+          $info = $exe.VersionInfo
+          Write-Host "file: $($exe.Name) $($exe.Length) bytes"
+          Write-Host "version: $($info.FileVersion) / $($info.ProductVersion)"
+
+      - name: Package
+        shell: pwsh
+        run: |
+          $v = "${{ steps.version.outputs.version }}"
+          $name = "pi-web-tray-$v-win-x64"
+          New-Item -ItemType Directory -Path dist | Out-Null
+          Copy-Item pi-web-tray.exe, README.md, LICENSE -Destination dist
+          Compress-Archive -Path dist/* -DestinationPath "$name.zip"
+          $hash = (Get-FileHash pi-web-tray.exe -Algorithm SHA256).Hash.ToLower()
+          "$hash  pi-web-tray.exe" | Set-Content "$name.sha256"
+          "package=$name" >> $env:GITHUB_OUTPUT
+        id: package
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: pi-web-tray-${{ steps.version.outputs.version }}
+          path: |
+            pi-web-tray.exe
+            *.zip
+            *.sha256
+
+      - name: Publish release
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $tag = "${{ github.ref_name }}"
+          $zip = (Get-ChildItem *.zip).FullName
+          $sha = (Get-ChildItem *.sha256).FullName
+          gh release create $tag `
+            --title "pi-web-tray $tag" `
+            --generate-notes `
+            pi-web-tray.exe $zip $sha
