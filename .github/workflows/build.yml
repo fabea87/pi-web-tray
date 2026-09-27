@@ -28,7 +28,13 @@ jobs:
           if ($ref -like "refs/tags/v*") {
             $version = "${{ github.ref_name }}".Substring(1)
           } else {
-            $version = "0.0.0"
+            # Branch/PR build: keep the base version from AssemblyInfo and add the
+            # short commit, so artifacts are readable and traceable instead of 0.0.0.
+            $current = Get-Content "src/AssemblyInfo.cs" -Raw
+            $m = [regex]::Match($current, 'AssemblyInformationalVersion\("([^"]+)"\)')
+            $base = if ($m.Success) { $m.Groups[1].Value } else { "0.0.0" }
+            $sha = $env:GITHUB_SHA.Substring(0, 7)
+            $version = "$base-dev.$sha"
           }
           $numeric = $version.Split("-")[0]
           $parts = @($numeric.Split(".")) + @("0", "0", "0", "0")
