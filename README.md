@@ -131,8 +131,12 @@ build.cmd
 fallback) and writes `pi-web-tray.exe` next to the script. Stop the running tray first
 (right-click → Exit) — a running exe locks the output file.
 
-Pushing a `v*` tag makes GitHub Actions build, package (`exe` + `zip` + `sha256`) and
-publish a release automatically; branch and pull-request builds just upload the artifacts.
+Every push to `main` (and every `v*` tag) makes GitHub Actions build, package
+(`exe` + `zip` + `sha256`) and publish a release automatically: the workflow takes the
+newest `v*` tag, bumps its patch number (`v1.0.0` → `v1.0.1`), builds the exe with that
+version, creates the tag on the pushed commit and marks the release as *Latest*. Pull
+requests only upload artifacts and are never released. Push a tag yourself
+(`git tag v2.0.0 && git push origin v2.0.0`) when you want to decide the version instead.
 
 | Path | Role |
 | --- | --- |

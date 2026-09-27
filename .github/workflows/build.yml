@@ -19,23 +19,42 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # tags are needed to compute the next release version
 
       - name: Resolve version
         id: version
         shell: pwsh
         run: |
           $ref = "${{ github.ref }}"
-          if ($ref -like "refs/tags/v*") {
+          $event = "${{ github.event_name }}"
+          $isTag = $ref -like "refs/tags/v*"
+          $isMainPush = ($event -eq "push" -and $ref -eq "refs/heads/main")
+
+          $current = Get-Content "src/AssemblyInfo.cs" -Raw
+          $m = [regex]::Match($current, 'AssemblyInformationalVersion\("([^"]+)"\)')
+          $base = if ($m.Success) { $m.Groups[1].Value } else { "0.0.0" }
+
+          if ($isTag) {
             $version = "${{ github.ref_name }}".Substring(1)
+          } elseif ($isMainPush) {
+            # Every push to main publishes the next patch release: bump the newest v* tag.
+            $tags = @(git tag -l "v*") |
+              Where-Object { $_ -match '^v\d+\.\d+\.\d+$' } |
+              ForEach-Object { [version]$_.Substring(1) } |
+              Sort-Object
+            if ($tags.Count -gt 0) {
+              $last = $tags[-1]
+              $version = "{0}.{1}.{2}" -f $last.Major, $last.Minor, ($last.Build + 1)
+            } else {
+              $version = $base
+            }
           } else {
-            # Branch/PR build: keep the base version from AssemblyInfo and add the
-            # short commit, so artifacts are readable and traceable instead of 0.0.0.
-            $current = Get-Content "src/AssemblyInfo.cs" -Raw
-            $m = [regex]::Match($current, 'AssemblyInformationalVersion\("([^"]+)"\)')
-            $base = if ($m.Success) { $m.Groups[1].Value } else { "0.0.0" }
-            $sha = $env:GITHUB_SHA.Substring(0, 7)
-            $version = "$base-dev.$sha"
+            # Pull request / manual build: readable and traceable, but not released.
+            $version = "$base-dev.$($env:GITHUB_SHA.Substring(0, 7))"
           }
+          $release = ($isTag -or $isMainPush).ToString().ToLowerInvariant()
+
           $numeric = $version.Split("-")[0]
           $parts = @($numeric.Split(".")) + @("0", "0", "0", "0")
           $asm = ($parts[0..3] -join ".")
@@ -49,7 +68,8 @@ jobs:
 
           "version=$version" >> $env:GITHUB_OUTPUT
           "assembly=$asm" >> $env:GITHUB_OUTPUT
-          Write-Host "packaging version $version (assembly $asm)"
+          "release=$release" >> $env:GITHUB_OUTPUT
+          Write-Host "packaging version $version (assembly $asm, release $release)"
 
       - name: Build
         shell: cmd
@@ -87,15 +107,28 @@ jobs:
             *.sha256
 
       - name: Publish release
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: steps.version.outputs.release == 'true'
         shell: pwsh
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          $tag = "${{ github.ref_name }}"
+          $tag = "v${{ steps.version.outputs.version }}"
+          $existing = gh release view $tag --json tagName --jq .tagName 2>$null
+          if ($existing) {
+            Write-Host "release $tag already exists; skipping"
+            exit 0
+          }
+
+          # Push builds create the tag for the current commit; a v* tag push already has it.
+          $target = @()
+          if ("${{ github.ref }}" -notlike "refs/tags/*") {
+            $target = @("--target", "${{ github.sha }}")
+          }
+
           $zip = (Get-ChildItem *.zip).FullName
           $sha = (Get-ChildItem *.sha256).FullName
           gh release create $tag `
             --title "pi-web-tray $tag" `
             --generate-notes `
+            @target `
             pi-web-tray.exe $zip $sha
