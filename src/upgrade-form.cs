@@ -461,66 +461,17 @@ sealed class UpgradeForm : Form
             Log("! pi installation not found (" + Paths.PiPackageDir + ")");
             return -1;
         }
-        return RunCommand(node, "\"" + cli + "\" " + piArgs, Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), timeoutMs);
+        return Paths.RunCommand(node, "\"" + cli + "\" " + piArgs, Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), timeoutMs, LogLine);
     }
 
     int RunNpm(string npmArgs, int timeoutMs)
     {
-        string npm = tray.NpmPath;
-        if (npm == null)
-        {
-            Log("! npm.cmd not found");
-            return -1;
-        }
-        string comspec = Environment.GetEnvironmentVariable("COMSPEC");
-        if (string.IsNullOrEmpty(comspec)) comspec = "cmd.exe";
-        return RunCommand(comspec, "/c \"" + npm + "\" " + npmArgs, Path.GetTempPath(), timeoutMs);
+        return Paths.RunNpm(npmArgs, timeoutMs, LogLine);
     }
 
-    int RunCommand(string fileName, string arguments, string workingDir, int timeoutMs)
+    void LogLine(string line)
     {
-        Log("> " + fileName + " " + arguments);
-        try
-        {
-            ProcessStartInfo psi = new ProcessStartInfo();
-            psi.FileName = fileName;
-            psi.Arguments = arguments;
-            psi.WorkingDirectory = workingDir;
-            psi.UseShellExecute = false;
-            psi.CreateNoWindow = true;
-            psi.RedirectStandardOutput = true;
-            psi.RedirectStandardError = true;
-
-            using (Process process = new Process())
-            {
-                process.StartInfo = psi;
-                process.OutputDataReceived += delegate(object s, DataReceivedEventArgs e)
-                {
-                    if (e.Data != null) Log("| " + e.Data);
-                };
-                process.ErrorDataReceived += delegate(object s, DataReceivedEventArgs e)
-                {
-                    if (e.Data != null) Log("| " + e.Data);
-                };
-                process.Start();
-                process.BeginOutputReadLine();
-                process.BeginErrorReadLine();
-                if (!process.WaitForExit(timeoutMs))
-                {
-                    Log("! timed out after " + (timeoutMs / 1000) + "s; killing the process tree");
-                    Paths.KillTree(process.Id);
-                    return -1;
-                }
-                process.WaitForExit(); // drain the async readers
-                Log("exit code " + process.ExitCode);
-                return process.ExitCode;
-            }
-        }
-        catch (Exception ex)
-        {
-            Log("! " + ex.Message);
-            return -1;
-        }
+        Log(line);
     }
 
     // ---------- ui plumbing ----------

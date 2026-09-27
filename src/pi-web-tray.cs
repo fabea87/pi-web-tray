@@ -218,7 +218,7 @@ sealed class TrayApp : ApplicationContext
     readonly Icon iconStopped, iconRunning, iconBusy;
     readonly ToolStripMenuItem statusItem, openItem, restartItem, upgradesItem,
         autoItem, watchdogItem, settingsItem, logItem, exitItem;
-    readonly string baseDir, logPath, configPath;
+    readonly string baseDir, logPath, configPath, setupLogPath;
     UpgradeForm upgradeForm;
     readonly object logLock = new object();
 
@@ -244,6 +244,7 @@ sealed class TrayApp : ApplicationContext
             "pi-web-tray");
         logPath = Path.Combine(baseDir, "server.log");
         configPath = Path.Combine(baseDir, "config.json");
+        setupLogPath = Path.Combine(baseDir, "setup.log");
 
         config = LoadConfig();
         activePort = config.Port;
@@ -313,9 +314,20 @@ sealed class TrayApp : ApplicationContext
         timer.Start();
 
         RefreshStatus();
-        // Autostart path: bring the server up silently (unless configured otherwise).
+        // Autostart path: install what is missing, then bring the server up silently
+        // (unless configured otherwise).
         RunAsync(delegate
         {
+            List<string> missing = MissingComponents();
+            if (missing.Count > 0)
+            {
+                if (Interlocked.CompareExchange(ref busy, 1, 0) != 0) return;
+                bool installed;
+                try { installed = InstallMissingComponents(missing); }
+                finally { SetBusy(false, null); }
+                if (!installed) { RefreshStatus(); return; }
+            }
+
             if (IsPortOpen() && !config.OpenBrowserAtLogin) return;
             SetBusy(true, "starting...");
             bool ok;
@@ -324,6 +336,62 @@ sealed class TrayApp : ApplicationContext
             if (ok && config.OpenBrowserAtLogin) LaunchBrowser();
             RefreshStatus();
         });
+    }
+
+    // ---------- first-run bootstrap ----------
+
+    const int NpmInstallTimeoutMs = 900000;
+
+    /// <summary>Global npm packages that are not installed yet.</summary>
+    static List<string> MissingComponents()
+    {
+        List<string> missing = new List<string>();
+        if (!Paths.PiInstalled) missing.Add(Paths.PiNpmName);
+        if (!Paths.PiWebInstalled) missing.Add(Paths.PiWebNpmName);
+        return missing;
+    }
+
+    static bool IsInstalled(string npmName)
+    {
+        return npmName == Paths.PiNpmName ? Paths.PiInstalled : Paths.PiWebInstalled;
+    }
+
+    static string DisplayName(string npmName)
+    {
+        if (npmName == Paths.PiNpmName) return "pi (agent)";
+        if (npmName == Paths.PiWebNpmName) return "pi-web";
+        return npmName;
+    }
+
+    /// <summary>
+    /// First run: installs the missing global packages with npm.
+    /// Returns false when npm is absent or an install failed.
+    /// </summary>
+    bool InstallMissingComponents(List<string> missing)
+    {
+        if (Paths.FindNpm() == null)
+        {
+            LogSetup("[tray] npm not found; install Node.js from https://nodejs.org and start the tray again");
+            Balloon("Node.js is required. Install it from nodejs.org, then start Pi Web Tray again.", ToolTipIcon.Error);
+            return false;
+        }
+
+        foreach (string npmName in missing)
+        {
+            string display = DisplayName(npmName);
+            LogSetup("[tray] first run: installing " + npmName);
+            SetBusy(true, "installing " + display + "...");
+            Balloon("Installing " + display + " for the first time - this can take a few minutes.", ToolTipIcon.Info);
+            int code = Paths.RunNpm("install -g " + npmName + "@latest", NpmInstallTimeoutMs, LogSetup);
+            if (code != 0 || !IsInstalled(npmName))
+            {
+                LogSetup("[tray] installing " + npmName + " failed (exit " + code + ")");
+                Balloon("Could not install " + display + ". See " + setupLogPath + ".", ToolTipIcon.Error);
+                return false;
+            }
+            LogSetup("[tray] installed " + npmName);
+        }
+        return true;
     }
 
     // ---------- settings ----------
@@ -930,6 +998,19 @@ sealed class TrayApp : ApplicationContext
     {
         if (e.Data == null) return;
         AppendLine(e.Data);
+    }
+
+    /// <summary>Writes a bootstrap (first-run install) line to setup.log as well.</summary>
+    void LogSetup(string line)
+    {
+        AppendLine(line);
+        try
+        {
+            Directory.CreateDirectory(baseDir);
+            lock (logLock)
+                File.AppendAllText(setupLogPath, DateTime.Now.ToString("HH:mm:ss") + "  " + line + Environment.NewLine, new UTF8Encoding(false));
+        }
+        catch { }
     }
 
     void AppendLine(string line)

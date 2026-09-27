@@ -11,6 +11,9 @@ using System.Text;
 
 static class Paths
 {
+    public const string PiNpmName = "@earendil-works/pi-coding-agent";
+    public const string PiWebNpmName = "@agegr/pi-web";
+
     public static string NpmGlobalModules
     {
         get
@@ -30,6 +33,8 @@ static class Paths
     {
         get { return Path.Combine(PiPackageDir, "dist", "bundle", "cli.js"); }
     }
+
+    public static bool PiInstalled { get { return File.Exists(PiCliEntry); } }
 
     public static string PiWebPackageDir
     {
@@ -70,6 +75,8 @@ static class Paths
             return null;
         }
     }
+
+    public static bool PiWebInstalled { get { return PiWebEntry != null; } }
 
     public static string FindNode()
     {
@@ -126,6 +133,70 @@ static class Paths
             return FlatJson.GetString(map, "version", null);
         }
         catch { return null; }
+    }
+
+    /// <summary>
+    /// Runs a console command, streaming stdout/stderr line by line to
+    /// <paramref name="log"/>. Returns the exit code, or -1 on timeout/error.
+    /// </summary>
+    public static int RunCommand(string fileName, string arguments, string workingDir, int timeoutMs, Action<string> log)
+    {
+        log("> " + fileName + " " + arguments);
+        try
+        {
+            ProcessStartInfo psi = new ProcessStartInfo();
+            psi.FileName = fileName;
+            psi.Arguments = arguments;
+            psi.WorkingDirectory = workingDir;
+            psi.UseShellExecute = false;
+            psi.CreateNoWindow = true;
+            psi.RedirectStandardOutput = true;
+            psi.RedirectStandardError = true;
+
+            using (Process process = new Process())
+            {
+                process.StartInfo = psi;
+                process.OutputDataReceived += delegate(object s, DataReceivedEventArgs e)
+                {
+                    if (e.Data != null) log("| " + e.Data);
+                };
+                process.ErrorDataReceived += delegate(object s, DataReceivedEventArgs e)
+                {
+                    if (e.Data != null) log("| " + e.Data);
+                };
+                process.Start();
+                process.BeginOutputReadLine();
+                process.BeginErrorReadLine();
+                if (!process.WaitForExit(timeoutMs))
+                {
+                    log("! timed out after " + (timeoutMs / 1000) + "s; killing the process tree");
+                    KillTree(process.Id);
+                    return -1;
+                }
+                process.WaitForExit(); // drain the async readers
+                log("exit code " + process.ExitCode);
+                return process.ExitCode;
+            }
+        }
+        catch (Exception ex)
+        {
+            log("! " + ex.Message);
+            return -1;
+        }
+    }
+
+    /// <summary>Runs an npm subcommand through cmd.exe, streaming its output.</summary>
+    public static int RunNpm(string npmArgs, int timeoutMs, Action<string> log)
+    {
+        string npm = FindNpm();
+        if (npm == null)
+        {
+            log("! npm.cmd not found");
+            return -1;
+        }
+        string comspec = Environment.GetEnvironmentVariable("COMSPEC");
+        if (string.IsNullOrEmpty(comspec)) comspec = "cmd.exe";
+        return RunCommand(comspec, "/c \"" + npm + "\" " + npmArgs, Path.GetTempPath(), timeoutMs, log);
     }
 
     public static void KillTree(int pid)

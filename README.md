@@ -13,6 +13,10 @@ working set.
 
 ## Features
 
+- **First run** — if pi-web (or pi) is not installed yet, the tray installs the missing
+  package globally with npm (`npm install -g <package>@latest`) before starting the server,
+  showing a tray balloon and streaming the install into `setup.log`. Node.js has to be
+  present already; if npm is missing the tray says so and stays idle.
 - **Autostart** — starts pi-web in the background at login (no console window). Toggleable
   from the tray menu.
 - **Click to open** — left-click the tray icon to open `http://127.0.0.1:30141` in your
@@ -36,6 +40,8 @@ working set.
   npm install -g @agegr/pi-web
   ```
 
+  On first start the tray runs this for you when the package (or pi) is missing.
+
 - Optional: pi installed globally (`npm install -g @earendil-works/pi-coding-agent`) if you
   want the dialog to upgrade pi and its packages too.
 
@@ -48,9 +54,17 @@ working set.
 
 The exe is unsigned, so SmartScreen may ask once: *More info* → *Run anyway*.
 
-It writes only two things outside its own folder: `%LOCALAPPDATA%\pi-web-tray\` (logs and
-`config.json`) and, if you enable autostart, the value `PiWebTray` under
+It writes only two things outside its own folder: `%LOCALAPPDATA%\pi-web-tray\` (logs,
+`setup.log` and `config.json`), and, if you enable autostart, the value `PiWebTray` under
 `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`.
+
+### First run
+
+Starting without `@agegr/pi-web` (or `@earendil-works/pi-coding-agent`) installed triggers a
+one-off bootstrap: the tray installs the missing packages globally with npm, logs every line
+to `%LOCALAPPDATA%\pi-web-tray\setup.log`, and then starts pi-web as usual. Nothing is
+installed when both packages are already present. If npm itself cannot be found the tray
+only shows an error balloon — install Node.js and start the tray again.
 
 ## Tray menu
 
@@ -124,7 +138,7 @@ publish a release automatically; branch and pull-request builds just upload the 
 | --- | --- |
 | `src/pi-web-tray.cs` | Tray app, settings, server supervision |
 | `src/upgrade-form.cs` | Upgrades dialog |
-| `src/paths.cs` | Shared paths, npm-registry lookups, version comparison |
+| `src/paths.cs` | Shared paths, npm helpers, version comparison |
 | `src/AssemblyInfo.cs` | Version metadata (rewritten from the git tag during releases) |
 | `src/app.manifest` | DPI awareness, Windows 10/11 compatibility, asInvoker |
 | `assets/pi-web-tray.ico` | Application icon |
